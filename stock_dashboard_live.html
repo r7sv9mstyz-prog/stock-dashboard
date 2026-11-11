@@ -1,0 +1,24 @@
+<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stock Lab | 実データ版</title><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>body{background:#101827;color:#f2f5fb;font:16px system-ui;margin:0;padding:18px}main{max-width:950px;margin:auto}.panel{background:#1c2a3c;border:1px solid #33455d;border-radius:15px;padding:18px;margin:16px 0}input,button{font:inherit;padding:11px;border-radius:9px;border:0;margin:4px}input{background:#fff;color:#111;max-width:90%}button{background:#9be3bc;color:#10261b;font-weight:700;cursor:pointer}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.tile{background:#29394e;border-radius:10px;padding:13px}.tile b{display:block;font-size:22px;margin-top:6px}.muted,small{color:#b5c4d7}a{color:#a8d9ff}canvas{max-height:350px}#status{white-space:pre-wrap}details{margin:12px 0}</style>
+<main><h1>📈 Stock Lab</h1><p class="muted">実際の米国株データを読み込む学習用ダッシュボード</p>
+<div class="panel"><h2>① 無料APIキーを設定</h2><p><a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener">Alpha Vantageで無料APIキーを取得</a>して貼り付けてね。キーはこのページ内でのみ使用し、保存しません。</p><input id="key" type="password" placeholder="API key" autocomplete="off"><h2>② 銘柄を入力</h2><input id="ticker" value="NVDA" placeholder="例: NVDA / AAPL / MSFT"><button id="go">実データを取得</button><p><small>企業名ではなく証券コード（ティッカー）を入力。米国株向け。無料APIには回数制限・遅延・取得制限があります。</small></p><p id="status" role="status"></p></div>
+<div class="panel"><h2 id="company">銘柄情報</h2><p id="updated" class="muted">未取得</p><div class="grid" id="metrics"></div></div>
+<div class="panel"><h2>株価チャート</h2><canvas id="chart"></canvas><p class="muted">日次終値と20営業日移動平均。取得できた最新の日付を表示します。</p></div>
+<div class="panel"><h2>初心者向けの確認ポイント</h2><p id="comment">データを取得すると、指標の読み方を表示します。これはAIによる投資推奨ではありません。</p><details><summary>PERとは？</summary>株価を1株当たり利益で割った値。業界や成長率との比較が重要です。</details><details><summary>ROEとは？</summary>自己資本に対してどれだけ利益を上げたかを示します。</details><details><summary>移動平均とは？</summary>一定期間の終値の平均で、株価の方向感を見る補助線です。</details></div>
+<p class="muted">データ提供: Alpha Vantage。無料プランの仕様により株価履歴や企業指標が取得できない場合があります。データの正確性・更新時刻を確認して投資判断してください。</p></main>
+<script>
+let chart;
+const $=id=>document.getElementById(id);
+function show(s){$('status').textContent=s}
+function fmt(x,suffix=''){if(x===null||x===undefined||x===''||x==='None'||!Number.isFinite(Number(x)))return '取得不可';return Number(x).toLocaleString('en-US',{maximumFractionDigits:2})+suffix}
+async function api(fn,key,symbol){let url='https://www.alphavantage.co/query?function='+encodeURIComponent(fn)+'&symbol='+encodeURIComponent(symbol)+'&apikey='+encodeURIComponent(key);let r=await fetch(url);if(!r.ok)throw Error('HTTP '+r.status);let j=await r.json();if(j.Note||j.Information||j['Error Message'])throw Error(j.Note||j.Information||j['Error Message']);return j}
+function metric(name,value){return '<div class="tile">'+name+'<b>'+value+'</b></div>'}
+$('go').onclick=async()=>{let key=$('key').value.trim(),symbol=$('ticker').value.trim().toUpperCase();if(!key||!symbol){show('APIキーとティッカーを入力してね。');return} $('go').disabled=true;show('実データを取得中…');try{
+let daily=await api('TIME_SERIES_DAILY',key,symbol);let series=daily['Time Series (Daily)'];if(!series)throw Error('日次株価が取得できません。無料プランの制限や銘柄コードを確認してください。');
+let dates=Object.keys(series).sort().slice(-100),prices=dates.map(d=>Number(series[d]['4. close']));let ma=prices.map((_,i)=>i<19?null:prices.slice(i-19,i+1).reduce((a,b)=>a+b,0)/20);
+if(chart)chart.destroy();chart=new Chart($('chart'),{type:'line',data:{labels:dates,datasets:[{label:'終値 (USD)',data:prices,borderColor:'#9be3bc',pointRadius:0},{label:'20日移動平均',data:ma,borderColor:'#f3c37d',pointRadius:0}]},options:{responsive:true,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:'#fff'}}},scales:{x:{ticks:{color:'#b5c4d7',maxTicksLimit:8}},y:{ticks:{color:'#b5c4d7'}}}}});
+$('company').textContent=symbol;$('updated').textContent='株価の最終日付: '+dates.at(-1)+'（米国市場日付）';$('metrics').innerHTML=metric('直近終値',fmt(prices.at(-1),' USD'));show('株価チャートを取得しました。企業指標を取得中…');
+try{let o=await api('OVERVIEW',key,symbol);if(!o.Symbol)throw Error('企業指標が提供されていません');$('company').textContent=(o.Name||symbol)+' ('+symbol+')';$('metrics').innerHTML=metric('直近終値',fmt(prices.at(-1),' USD'))+metric('PER',fmt(o.PERatio,'倍'))+metric('ROE',fmt(Number(o.ReturnOnEquityTTM)*100,'%'))+metric('PBR',fmt(o.PriceToBookRatio,'倍'))+metric('時価総額',fmt(o.MarketCapitalization,' USD'))+metric('利益成長率 (前年比)',fmt(Number(o.QuarterlyEarningsGrowthYOY)*100,'%'));$('comment').textContent='PER・ROE・PBRは同業他社や過去の推移と比較しよう。株価と財務指標は更新タイミングが異なる場合があります。決算、負債、成長率、競争環境も確認してね。';show('株価と企業指標を取得しました。')}
+catch(e){$('comment').textContent='株価は取得できました。企業指標は無料APIの制限などで取得できない場合があります。';show('株価は取得済み。企業指標: '+e.message)}
+}catch(e){show('取得に失敗しました: '+e.message+'\nAPIキー、利用回数制限、通信環境を確認してね。')}finally{$('go').disabled=false}};
+</script></html>
